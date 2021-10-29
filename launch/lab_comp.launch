@@ -1,3 +1,4 @@
 <launch>
-    <node pkg="lab_comp" type="lab_comp_node" name="lab_comp" />
+    <!-- Could have added the respawn attribute but lab instructions were vague so it was left out -->
+    <node pkg="lab_comp" type="lab_comp_node" name="lab_comp" output="screen" />
 </launch>
