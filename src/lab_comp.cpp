@@ -12,6 +12,9 @@
 #include <osrf_gear/GetMaterialLocationsResponse.h>
 #include "osrf_gear/StorageUnit.h"
 #include "osrf_gear/LogicalCameraImage.h"
+#include "ur_kinematics/ur_kin.h"
+#include "sensor_msgs/JointState.h"
+#include "trajectory_msgs/JointTrajectory.h"
 
 std_srvs::Trigger begin_comp; 
 int service_call_succeeded;
@@ -20,7 +23,12 @@ osrf_gear::GetMaterialLocations material_location;
 int location_call_succeeded;
 std_msgs::String object_type;
 osrf_gear::StorageUnit location;
-std::vector<osrf_gear::LogicalCameraImage> image_vector(10); 
+std::vector<osrf_gear::LogicalCameraImage> image_vector(10);
+sensor_msgs::JointState joint_states;
+std::vector<osrf_gear::Model> desired;
+trajectory_msgs::JointTrajectory joint_trajectory;
+double T_pose[4][4], T_des[4][4];
+double q_pose[6], q_des[8][6]; 
 
 void orderCallback(const osrf_gear::Order::ConstPtr& order)
 {
@@ -83,6 +91,15 @@ void qc2Callback(const osrf_gear::LogicalCameraImage::ConstPtr& image)
 	cameraCallback(image,9);
 }
 
+void jointStateCallback(const sensor_msgs::JointState::ConstPtr& state)
+{
+    joint_states.effort = state->effort;
+	joint_states.header = state->header;
+	joint_states.name = state->name;
+	joint_states.position = state->position;
+	joint_states.velocity = state->velocity;
+}
+
 std::string pose2str(geometry_msgs::Pose pose)
 {
 	std::string posestring = "Position: x="+std::to_string(pose.position.x)+" y="+std::to_string(pose.position.y)+" z="+std::to_string(pose.position.z)+" Orientation: x="+std::to_string(pose.orientation.x)+" y="+std::to_string(pose.orientation.y)+" z="+std::to_string(pose.orientation.z)+" w="+std::to_string(pose.orientation.w);
@@ -94,22 +111,24 @@ int main(int argc, char **argv)
 	order_vector.clear();
 	image_vector.clear();
 
-  ros::init(argc, argv, "lab_comp");
+  	ros::init(argc, argv, "lab_comp");
 
-  ros::NodeHandle n;
-  ros::ServiceClient begin_client = n.serviceClient<std_srvs::Trigger>("ariac/start_competition");
-  ros::Subscriber order_subscriber = n.subscribe("ariac/orders",1000,orderCallback);
+ 	ros::NodeHandle n;
+ 	ros::ServiceClient begin_client = n.serviceClient<std_srvs::Trigger>("ariac/start_competition");
+  	ros::Subscriber order_subscriber = n.subscribe("ariac/orders",1000,orderCallback);
 	ros::ServiceClient material_client = n.serviceClient<osrf_gear::GetMaterialLocations>("ariac/material_locations");
-  ros::Subscriber bin1_sub = n.subscribe("ariac/logical_camera_bin1",1,bin1Callback);
+  	ros::Subscriber bin1_sub = n.subscribe("ariac/logical_camera_bin1",1,bin1Callback);
 	ros::Subscriber bin2_sub = n.subscribe("ariac/logical_camera_bin2",1,bin2Callback);
-  ros::Subscriber bin3_sub = n.subscribe("ariac/logical_camera_bin3",1,bin3Callback);
-  ros::Subscriber bin4_sub = n.subscribe("ariac/logical_camera_bin4",1,bin4Callback);
-  ros::Subscriber bin5_sub = n.subscribe("ariac/logical_camera_bin5",1,bin5Callback);
-  ros::Subscriber bin6_sub = n.subscribe("ariac/logical_camera_bin6",1,bin6Callback);
+  	ros::Subscriber bin3_sub = n.subscribe("ariac/logical_camera_bin3",1,bin3Callback);
+  	ros::Subscriber bin4_sub = n.subscribe("ariac/logical_camera_bin4",1,bin4Callback);
+  	ros::Subscriber bin5_sub = n.subscribe("ariac/logical_camera_bin5",1,bin5Callback);
+  	ros::Subscriber bin6_sub = n.subscribe("ariac/logical_camera_bin6",1,bin6Callback);
 	ros::Subscriber agv1_sub = n.subscribe("ariac/logical_camera_agv1",1,agv1Callback);
 	ros::Subscriber agv2_sub = n.subscribe("ariac/logical_camera_agv2",1,agv2Callback);
-  ros::Subscriber qc1_sub = n.subscribe("ariac/quality_control_sensor_1",1,qc1Callback);
-  ros::Subscriber qc2_sub = n.subscribe("ariac/quality_control_sensor_2",1,qc2Callback);
+  	ros::Subscriber qc1_sub = n.subscribe("ariac/quality_control_sensor_1",1,qc1Callback);
+  	ros::Subscriber qc2_sub = n.subscribe("ariac/quality_control_sensor_2",1,qc2Callback);
+	ros::Subscriber joint_state_sub = n.subscribe("ariac/arm1/joint_states",10,jointStateCallback);
+    ros::Publisher joint_state_pub = n.advertise<trajectory_msgs::JointTrajectory>("ariac/arm1/arm/command",1000);
 
 	service_call_succeeded = begin_client.call(begin_comp);
 	if(!service_call_succeeded) {
@@ -124,9 +143,11 @@ int main(int argc, char **argv)
 		}
 	}
 
-	ros::Rate loop_rate(10);
+	ros::Rate loop_rate(1);
 
-  while(ros::ok())
+	int count = 0;
+	int model_num = 0;
+  	while(ros::ok())
 	{
 		loop_rate.sleep();
 		if(order_vector.size() > 0)
@@ -143,12 +164,80 @@ int main(int argc, char **argv)
 				{
 					if(image_vector[i].models[j].type == product_type)
 					{
+						desired.push_back(image_vector[i].models[j]);
 						ROS_INFO("Product type: %s, Bin: %s, Pose: %s", product_type.c_str(), std::to_string(i).c_str(), pose2str(image_vector[i].models[j].pose).c_str());
 					}
 				}
 			}
 		}
+		if (model_num < desired.size())
+		{
+			loop_rate.sleep();
+			q_pose[0] = joint_states.position[1];   
+			q_pose[1] = joint_states.position[2];   
+			q_pose[2] = joint_states.position[3];   
+			q_pose[3] = joint_states.position[4];   
+			q_pose[4] = joint_states.position[5];   
+			q_pose[5] = joint_states.position[6];
+
+			ur_kinematics::forward((double *)&q_pose, (double *)&T_pose);
+			
+			T_des[0][3] = desired[model_num].pose.position.x;   
+			T_des[1][3] = desired[model_num].pose.position.y;   
+			T_des[2][3] = desired[model_num].pose.position.z + 0.3;
+			T_des[3][3] = 1.0;   
+				
+			T_des[0][0] = 0.0; T_des[0][1] = -1.0; T_des[0][2] = 0.0;   
+			T_des[1][0] = 0.0; T_des[1][1] = 0.0; T_des[1][2] = 1.0;   
+			T_des[2][0] = -1.0; T_des[2][1] = 0.0; T_des[2][2] = 0.0;   
+			T_des[3][0] = 0.0; T_des[3][1] = 0.0; T_des[3][2] = 0.0;	
+
+			int num_sols = ur_kinematics::inverse((double *)&T_des, (double *)&q_des);  
+
+			joint_trajectory.header.seq = count++;
+			joint_trajectory.header.stamp = ros::Time::now();
+			joint_trajectory.header.frame_id = "/world";
+
+			joint_trajectory.joint_names.clear();
+			joint_trajectory.joint_names.push_back("linear_arm_actuator_joint");   
+			joint_trajectory.joint_names.push_back("shoulder_pan_joint");   
+			joint_trajectory.joint_names.push_back("shoulder_lift_joint");   
+			joint_trajectory.joint_names.push_back("elbow_joint");   
+			joint_trajectory.joint_names.push_back("wrist_1_joint");   
+			joint_trajectory.joint_names.push_back("wrist_2_joint");   
+			joint_trajectory.joint_names.push_back("wrist_3_joint"); 
+
+			joint_trajectory.points.resize(2);
+			joint_trajectory.points[0].positions.resize(joint_trajectory.joint_names.size());
+			for (int indy = 0; indy < joint_trajectory.joint_names.size(); indy++)
+			{
+				for (int indz = 0; indz < joint_states.name.size(); indz++)
+				{
+					if (joint_trajectory.joint_names[indy] == joint_states.name[indz])
+					{
+						joint_trajectory.points[0].positions[indy] = joint_states.position[indz];
+						break;
+					}
+				}
+			}
+
+			joint_trajectory.points[0].time_from_start = ros::Duration(0.0);
+
+			int q_des_indx = 0;
+
+			joint_trajectory.points[1].positions.resize(joint_trajectory.joint_names.size());
+			joint_trajectory.points[1].positions[0] = joint_states.position[0];
+			for (int indy = 0; indy < 6; indy++)
+			{
+				joint_trajectory.points[1].positions[indy + 1] = q_des[q_des_indx][indy];
+			}
+			joint_trajectory.points[1].time_from_start = ros::Duration(1.0); 
+
+			joint_state_pub.publish(joint_trajectory);
+			model_num++;
+			loop_rate.sleep();
+		}
 		ros::spinOnce();
 	}
-  return 0;
+  	return 0;
 }

@@ -160,6 +160,7 @@ add_executable(${PROJECT_NAME}_node src/lab_comp.cpp)
 ## Specify libraries to link a library or executable target against
   target_link_libraries(${PROJECT_NAME}_node
     ${catkin_LIBRARIES}
+    ur10_kin
   )
 
 #############
