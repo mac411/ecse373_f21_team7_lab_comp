@@ -37,7 +37,7 @@ There are two launch files included in this package that must be launched sequan
         
         roslaunch lab_comp competition_environment.launch
 - The image below shows what the envierment should look like 
-![alt text](http://url/to/img.png)
+![alt text](https://github.com/mac411/ecse373_f21_team7_lab_comp/blob/master/Screenshot%20from%202021-11-09%2017-23-44.png)
 - Wait for the GUI to finish loading and the messages in the Terminal to stop updating. Now the environment is fully set up and you are ready to start the competition. Use the following command:
 
         roslaunch lab_comp lab_comp.launch
