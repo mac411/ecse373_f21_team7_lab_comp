@@ -36,10 +36,13 @@ There are two launch files included in this package that must be launched sequan
 - Launch the competition environment:
         
         roslaunch lab_comp competition_environment.launch
-
+- The image below shows what the envierment should look like 
+![alt text](http://url/to/img.png)
 - Wait for the GUI to finish loading and the messages in the Terminal to stop updating. Now the environment is fully set up and you are ready to start the competition. Use the following command:
 
         roslaunch lab_comp lab_comp.launch
+        
+-Once launched the robot arm will be seen moving over box 4 this is an addition that happened after lab 5. The arm will look over each of the tools in the box and move accordingly. The image below shows what the arm moving in the envirment should look like. 
         
 ### Note
 The simulation environment process must be killed and restarted manually in order start the competition over again. The node will warn you if it has not executed properly.
