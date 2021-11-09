@@ -15,9 +15,13 @@
 #include "ur_kinematics/ur_kin.h"
 #include "sensor_msgs/JointState.h"
 #include "trajectory_msgs/JointTrajectory.h"
-
+#include "tf2_ros/transform_listener.h"   
+#include "tf2_geometry_msgs/tf2_geometry_msgs.h"   
+#include "geometry_msgs/TransformStamped.h" 
+tf2_ros::Buffer   tfBuffer; 
 std_srvs::Trigger begin_comp; 
 int service_call_succeeded;
+geometry_msgs::TransformStamped   tfStamped;   
 std::vector<osrf_gear::Order> order_vector;
 osrf_gear::GetMaterialLocations material_location;
 int location_call_succeeded;
@@ -110,10 +114,10 @@ int main(int argc, char **argv)
 {
 	order_vector.clear();
 	image_vector.clear();
-
+   
   	ros::init(argc, argv, "lab_comp");
-
  	ros::NodeHandle n;
+	tf2_ros::TransformListener    tfListener(tfBuffer) ;   
  	ros::ServiceClient begin_client = n.serviceClient<std_srvs::Trigger>("ariac/start_competition");
   	ros::Subscriber order_subscriber = n.subscribe("ariac/orders",1000,orderCallback);
 	ros::ServiceClient material_client = n.serviceClient<osrf_gear::GetMaterialLocations>("ariac/material_locations");
@@ -156,7 +160,16 @@ int main(int argc, char **argv)
 			location_call_succeeded = material_client.call(material_location);
 			ROS_INFO("The object is of type: %s", material_location.request.material_type.c_str());
 			ROS_INFO("The storage unit containing this object is: %s", material_location.response.storage_units.front().unit_id.c_str());
-			order_vector.clear();
+			
+			try    {   
+				tfStamped   =   tfBuffer.lookupTransform( "arm1_base_link" ,  "logical_camera_bin4_frame" ,   
+				ros::Time( 0.0 ),   ros::Duration( 1.0 ));   
+				ROS_DEBUG( "Transform   to   [%s]   from   [%s]" ,   tfStamped.header.frame_id.c_str(),   
+				tfStamped.child_frame_id.c_str());   
+			}catch    (tf2::TransformException   &ex)   {   
+				ROS_ERROR( "%s" ,   ex.what());   
+			}   
+						order_vector.clear();
 			std::string product_type = material_location.request.material_type;
 			for(int i = 0; i < 6; i++)
 			{
@@ -173,6 +186,9 @@ int main(int argc, char **argv)
 		if (model_num < desired.size())
 		{
 			loop_rate.sleep();
+			geometry_msgs::PoseStamped   part_pose,   goal_pose;
+			part_pose.pose = desired[model_num].pose;
+			tf2::doTransform(part_pose,   goal_pose,   tfStamped);  
 			q_pose[0] = joint_states.position[1];   
 			q_pose[1] = joint_states.position[2];   
 			q_pose[2] = joint_states.position[3];   
@@ -182,9 +198,9 @@ int main(int argc, char **argv)
 
 			ur_kinematics::forward((double *)&q_pose, (double *)&T_pose);
 			
-			T_des[0][3] = desired[model_num].pose.position.x;   
-			T_des[1][3] = desired[model_num].pose.position.y;   
-			T_des[2][3] = desired[model_num].pose.position.z + 0.3;
+			T_des[0][3] = goal_pose.pose.position.x;   
+			T_des[1][3] = goal_pose.pose.position.y;   
+			T_des[2][3] = goal_pose.pose.position.z + 0.3;
 			T_des[3][3] = 1.0;   
 				
 			T_des[0][0] = 0.0; T_des[0][1] = -1.0; T_des[0][2] = 0.0;   
@@ -226,7 +242,7 @@ int main(int argc, char **argv)
 			int q_des_indx = 0;
 
 			joint_trajectory.points[1].positions.resize(joint_trajectory.joint_names.size());
-			joint_trajectory.points[1].positions[0] = joint_states.position[0];
+			joint_trajectory.points[1].positions[0] = joint_states.position[1];
 			for (int indy = 0; indy < 6; indy++)
 			{
 				joint_trajectory.points[1].positions[indy + 1] = q_des[q_des_indx][indy];
