@@ -451,7 +451,7 @@ int main(int argc, char **argv)
 	// geometry_msgs::PoseStamped   part_pose,   goal_pose;
 	// part_pose.pose = desired[model_num].pose;
 	// tf2::doTransform(part_pose,   goal_pose,   tfStamped);
-	// q_pose[0] = joint_states.position[1];
+	// q_pose[0] = joint_states.position[1]
 	// q_pose[1] = joint_states.position[2];
 	// q_pose[2] = joint_states.position[3];
 	// q_pose[3] = joint_states.position[4];
