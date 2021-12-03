@@ -20,6 +20,7 @@
 #include "geometry_msgs/TransformStamped.h"
 #include "osrf_gear/VacuumGripperControl.h"
 #include "angles/angles.h"
+#include "osrf_gear/VacuumGripperState.h"
 
 tf2_ros::Buffer tfBuffer;
 std_srvs::Trigger begin_comp;
@@ -34,6 +35,8 @@ std::vector<osrf_gear::LogicalCameraImage> image_vector(10);
 sensor_msgs::JointState joint_states;
 std::vector<osrf_gear::Model> desired;
 trajectory_msgs::JointTrajectory joint_trajectory;
+osrf_gear::VacuumGripperControl gripper_control;
+osrf_gear::VacuumGripperState gripper_state;
 double T_pose[4][4], T_des[4][4];
 double q_pose[6], q_des[8][6];
 int count = 0;
@@ -54,18 +57,7 @@ void cameraCallback(const osrf_gear::LogicalCameraImage::ConstPtr &image, int in
 	image_vector[index] = i;
 }
 
-//THIS IS THE GRIPPER STATE
-// void GantryControl::activateGripper(std::string arm_name) {
-//     nist_gear::VacuumGripperControl srv;
-//     srv.request.enable = true;
-//     left_gripper_control_client.call(srv);
-// }
-// void GantryControl::deactivateGripper(std::string arm_name) {
-//     nist_gear::VacuumGripperControl srv;
-//     srv.request.enable = false;
-//     left_gripper_control_client.call(srv);
-//     ROS_INFO_STREAM("[GantryControl][deactivateGripper] DEBUG: srv.response =" << srv.response);
-// }
+
 void bin1Callback(const osrf_gear::LogicalCameraImage::ConstPtr &image)
 {
 	cameraCallback(image, 0);
@@ -120,13 +112,19 @@ void jointStateCallback(const sensor_msgs::JointState::ConstPtr &state)
 	joint_states.velocity = state->velocity;
 }
 
+void gripperCallback(const osrf_gear::VacuumGripperStateConstPtr &state)
+{
+	gripper_state.attached = state->attached;
+	gripper_state.enabled = state->enabled;
+}
+
 std::string pose2str(geometry_msgs::Pose pose)
 {
 	std::string posestring = "Position: x=" + std::to_string(pose.position.x) + " y=" + std::to_string(pose.position.y) + " z=" + std::to_string(pose.position.z) + " Orientation: x=" + std::to_string(pose.orientation.x) + " y=" + std::to_string(pose.orientation.y) + " z=" + std::to_string(pose.orientation.z) + " w=" + std::to_string(pose.orientation.w);
 	return posestring;
 }
 
-trajectory_msgs::JointTrajectory generate_traj(geometry_msgs::Pose desired_pose)
+trajectory_msgs::JointTrajectory generate_traj(geometry_msgs::Pose desired_pose, double lin_act)
 {
 	// desired_pose should be desired[model_num].pose for a part
 	geometry_msgs::PoseStamped des_pose, goal_pose;
@@ -141,6 +139,10 @@ trajectory_msgs::JointTrajectory generate_traj(geometry_msgs::Pose desired_pose)
 
 	ur_kinematics::forward((double *)&q_pose, (double *)&T_pose);
 
+	goal_pose.pose.orientation.w = 0.707;
+	goal_pose.pose.orientation.x = 0;
+	goal_pose.pose.orientation.y = 0.707;
+	goal_pose.pose.orientation.z = 0;
 	T_des[0][3] = goal_pose.pose.position.x;
 	T_des[1][3] = goal_pose.pose.position.y;
 	T_des[2][3] = goal_pose.pose.position.z;
@@ -194,19 +196,19 @@ trajectory_msgs::JointTrajectory generate_traj(geometry_msgs::Pose desired_pose)
 	for (int i = 0; i < num_sols; i++)
 	{
 		q_des_indx = i;
-		if (q_des[q_des_indx][2] >= 3 * 1.5707 && q_des[q_des_indx][2] <= 4 * 1.5707)
+		if (q_des[q_des_indx][1] >= 3 * 1.5707 && q_des[q_des_indx][1] <= 4 * 1.5707)
 		{
-			if (abs(q_des[q_des_indx][5] - (3 * 1.5707)) < 0.5)
+			if (abs(q_des[q_des_indx][4] - (3 * 1.5707)) < 0.5)
 			{
 				break;
 			}
 		}
 	}
 
-	q_des[q_des_indx][2] = angles::normalize_angle(q_des[q_des_indx][2]);
+	q_des[q_des_indx][1] = angles::normalize_angle(q_des[q_des_indx][1]);
 
 	joint_trajectory.points[1].positions.resize(joint_trajectory.joint_names.size());
-	joint_trajectory.points[1].positions[0] = joint_states.position[1];
+	joint_trajectory.points[1].positions[0] = lin_act;
 	for (int indy = 0; indy < 6; indy++)
 	{
 		joint_trajectory.points[1].positions[indy + 1] = q_des[q_des_indx][indy];
@@ -280,7 +282,9 @@ trajectory_msgs::JointTrajectory linear_act(double offset)
 
 	joint_trajectory.points[1].time_from_start = ros::Duration(1.0);
 
-	joint_trajectory.points[1].positions[0] = offset - 0.4;
+	joint_trajectory.points[1].positions[0] = offset - 0.3;
+
+	return joint_trajectory;
 }
 
 int main(int argc, char **argv)
@@ -306,8 +310,8 @@ int main(int argc, char **argv)
 	ros::Subscriber qc2_sub = n.subscribe("ariac/quality_control_sensor_2", 1, qc2Callback);
 	ros::Subscriber joint_state_sub = n.subscribe("ariac/arm1/joint_states", 10, jointStateCallback);
 	ros::Publisher joint_state_pub = n.advertise<trajectory_msgs::JointTrajectory>("ariac/arm1/arm/command", 1000);
-	//stuff I added
-	// gripper_control_client = node_.serviceClient<nist_gear::VacuumGripperControl>("/ariac/gripper/control");
+	ros::ServiceClient gripper_client = n.serviceClient<osrf_gear::VacuumGripperControl>("ariac/arm1/gripper/control");
+	ros::Subscriber gripper_sub = n.subscribe("ariac/arm1/gripper/state", 1, gripperCallback);
 
 	service_call_succeeded = begin_client.call(begin_comp);
 	if (!service_call_succeeded)
@@ -326,7 +330,7 @@ int main(int argc, char **argv)
 		}
 	}
 
-	ros::Rate loop_rate(1);
+	ros::Rate loop_rate(0.5);
 
 	int model_num = 0;
 	int order_num = 0;
@@ -345,7 +349,7 @@ int main(int argc, char **argv)
 			{
 				tfStamped = tfBuffer.lookupTransform("arm1_base_link", "logical_camera_bin4_frame",
 													 ros::Time(0.0), ros::Duration(1.0));
-				ROS_DEBUG("Transform   to   [%s]   from   [%s]", tfStamped.header.frame_id.c_str(),
+				ROS_INFO("Transform   to   [%s]   from   [%s]", tfStamped.header.frame_id.c_str(),
 						  tfStamped.child_frame_id.c_str());
 			}
 			catch (tf2::TransformException &ex)
@@ -377,17 +381,68 @@ int main(int argc, char **argv)
 		if (model_num < desired.size())
 		{
 			loop_rate.sleep();
-			// Start pose
-			geometry_msgs::Pose test = desired[model_num].pose;
-			// test.position.y = test.position.y - 0.4;
-			// test.position.z = test.position.z + 0.8;
-			//test.position.x = test.position.x - 1;
-
-			//joint_trajectory = generate_traj(test);
-
+			geometry_msgs::Pose des = desired[model_num].pose;
+			double lin_act = des.position.y - 0.3;
+			joint_trajectory = linear_act(des.position.y);
 			joint_state_pub.publish(joint_trajectory);
-			model_num++;
 			loop_rate.sleep();
+			try
+			{
+				tfStamped = tfBuffer.lookupTransform("arm1_base_link", "logical_camera_bin4_frame",
+													 ros::Time(0.0), ros::Duration(1.0));
+				ROS_INFO("Transform   to   [%s]   from   [%s]", tfStamped.header.frame_id.c_str(),
+						  tfStamped.child_frame_id.c_str());
+			}
+			catch (tf2::TransformException &ex)
+			{
+				ROS_ERROR("%s", ex.what());
+			}
+
+			des.position.x = des.position.x - 0.7;
+			des.position.y = des.position.y - 0.3;
+			joint_trajectory = generate_traj(des,lin_act);
+			joint_state_pub.publish(joint_trajectory);
+			loop_rate.sleep();
+
+			des.position.x = des.position.x + 0.6;
+			joint_trajectory = generate_traj(des,lin_act);
+			joint_state_pub.publish(joint_trajectory);
+			loop_rate.sleep();
+
+			des.position.y = des.position.y + 0.3;
+			joint_trajectory = generate_traj(des,lin_act);
+			joint_state_pub.publish(joint_trajectory);
+			loop_rate.sleep();
+
+			des.position.x = des.position.x + 0.08;
+			joint_trajectory = generate_traj(des,lin_act);
+			joint_state_pub.publish(joint_trajectory);
+			loop_rate.sleep();
+
+			gripper_control.request.enable = 1;
+			gripper_client.call(gripper_control);
+			loop_rate.sleep();
+
+			des.position.x = des.position.x - 0.18;
+			joint_trajectory = generate_traj(des,lin_act);
+			joint_state_pub.publish(joint_trajectory);
+			loop_rate.sleep();
+
+			gripper_control.request.enable = 0;
+			gripper_client.call(gripper_control);
+			loop_rate.sleep();
+
+			des.position.y = des.position.y - 0.3;
+			joint_trajectory = generate_traj(des,lin_act);
+			joint_state_pub.publish(joint_trajectory);
+			loop_rate.sleep();
+
+			des.position.x = des.position.x - 0.6;
+			joint_trajectory = generate_traj(des,lin_act);
+			joint_state_pub.publish(joint_trajectory);
+			loop_rate.sleep();
+
+			model_num++;
 		}
 		ros::spinOnce();
 	}
