@@ -21,6 +21,8 @@
 #include "osrf_gear/VacuumGripperControl.h"
 #include "angles/angles.h"
 #include "osrf_gear/VacuumGripperState.h"
+#include "osrf_gear/AGVControl.h"
+#include "std_msgs/Float32.h"
 
 tf2_ros::Buffer tfBuffer;
 std_srvs::Trigger begin_comp;
@@ -42,6 +44,14 @@ osrf_gear::VacuumGripperState gripper_state;
 sensor_msgs::JointState prev_joint_state;
 std::vector<osrf_gear::Shipment> shipment_vec;
 std::vector<int> bin_numbers;
+std::vector<std::string> shipment_types;
+osrf_gear::AGVControl agv1_srv;
+osrf_gear::AGVControl agv2_srv;
+bool agv1_resp;
+bool agv2_resp;
+float score;
+std::string agv1_state;
+std::string agv2_state;
 double T_pose[4][4], T_des[4][4];
 double q_pose[6], q_des[8][6];
 int count = 0;
@@ -126,6 +136,21 @@ std::string pose2str(geometry_msgs::Pose pose)
 {
 	std::string posestring = "Position: x=" + std::to_string(pose.position.x) + " y=" + std::to_string(pose.position.y) + " z=" + std::to_string(pose.position.z) + " Orientation: x=" + std::to_string(pose.orientation.x) + " y=" + std::to_string(pose.orientation.y) + " z=" + std::to_string(pose.orientation.z) + " w=" + std::to_string(pose.orientation.w);
 	return posestring;
+}
+
+void scoreCallback(const std_msgs::Float32::ConstPtr &latest_score)
+{
+	score = latest_score->data;
+}
+
+void agv1StateCallback(const std_msgs::String::ConstPtr &state)
+{
+	agv1_state = state->data;
+}
+
+void agv2StateCallback(const std_msgs::String::ConstPtr &state)
+{
+	agv2_state = state->data;
 }
 
 trajectory_msgs::JointTrajectory generate_traj(geometry_msgs::Pose desired_pose, double lin_act)
@@ -317,6 +342,11 @@ int main(int argc, char **argv)
 	ros::Publisher joint_state_pub = n.advertise<trajectory_msgs::JointTrajectory>("ariac/arm1/arm/command", 1000);
 	ros::ServiceClient gripper_client = n.serviceClient<osrf_gear::VacuumGripperControl>("ariac/arm1/gripper/control");
 	ros::Subscriber gripper_sub = n.subscribe("ariac/arm1/gripper/state", 1, gripperCallback);
+	ros::ServiceClient agv1_client = n.serviceClient<osrf_gear::AGVControlRequest>("ariac/agv1");
+	ros::ServiceClient agv2_client = n.serviceClient<osrf_gear::AGVControlRequest>("ariac/agv2");
+	ros::Subscriber score_sub = n.subscribe("ariac/current_score",1,scoreCallback);
+	ros::Subscriber agv1_state_sub = n.subscribe("ariac/agv1",1,agv1StateCallback);
+	ros::Subscriber agv2_state_sub = n.subscribe("ariac/agv2",1,agv2StateCallback);
 
 	service_call_succeeded = begin_client.call(begin_comp);
 	if (!service_call_succeeded)
@@ -340,51 +370,12 @@ int main(int argc, char **argv)
 	int order_idx = 0;
 	int order_num = 0;
 	bool order_fulfilled = false;
+	int shipment1 = 0;
+	int shipment2 = 0;
 	while (ros::ok())
 	{
+		ROS_INFO("Current score is %s", std::to_string(score).c_str());
 		loop_rate.sleep();
-		// if (order_vector.size() > 0 && order_num < order_vector.size())
-		// {
-		// 	material_location.request.material_type = order_vector.front().shipments.front().products.front().type;
-		// 	location_call_succeeded = material_client.call(material_location);
-		// 	ROS_INFO("The object is of type: %s", material_location.request.material_type.c_str());
-		// 	ROS_INFO("The storage unit containing this object is: %s", material_location.response.storage_units.front().unit_id.c_str());
-
-		// 	// try
-		// 	// {
-		// 	// 	tfStamped = tfBuffer.lookupTransform("arm1_base_link", "logical_camera_bin4_frame",
-		// 	// 										 ros::Time(0.0), ros::Duration(1.0));
-		// 	// 	ROS_INFO("Transform   to   [%s]   from   [%s]", tfStamped.header.frame_id.c_str(),
-		// 	// 			  tfStamped.child_frame_id.c_str());
-		// 	// }
-		// 	// catch (tf2::TransformException &ex)
-		// 	// {
-		// 	// 	ROS_ERROR("%s", ex.what());
-		// 	// }
-
-		// 	//order_num += 1;
-		// 	// for(int i = 0; i < order_vector.back().shipments.size(); i++)
-		// 	// {
-		// 	// 	shipment_vec.push_back(order_vector[order_num].shipments[i]);
-		// 	// }
-		// 	// std::string product_type = material_location.request.material_type;
-		// 	// int tray_pose_idx = 0;
-		// 	// for (int i = 0; i < 6; i++)
-		// 	// {
-		// 	// 	for (int j = 0; j < image_vector[i].models.size(); j++)
-		// 	// 	{
-		// 	// 		if (image_vector[i].models[j].type == product_type)
-		// 	// 		{
-		// 	// 			desired.push_back(image_vector[i].models[j]);
-		// 	// 			tray_poses.push_back(order_vector.front().shipments.front().products[tray_pose_idx].pose);
-		// 	// 			agv_ids.push_back(order_vector.front().shipments.front().agv_id);
-		// 	// 			ROS_INFO("Product type: %s, Bin: %s, Pose: %s", product_type.c_str(), std::to_string(i + 1).c_str(), pose2str(image_vector[i].models[j].pose).c_str());
-		// 	// 			tray_pose_idx = tray_pose_idx + 1;
-		// 	// 		}
-		// 	// 	}
-		// 	// }
-		// 	// order_vector.clear();
-		// }
 		if (order_vector.size() > 0 && order_num < order_vector.size())
 		{
 			order_fulfilled = false;
@@ -392,7 +383,10 @@ int main(int argc, char **argv)
 			tray_poses.clear();
 			agv_ids.clear();
 			bin_numbers.clear();
+			shipment_types.clear();
 			order_num += 1;
+			std::vector<int> last_bin_models;
+			last_bin_models.resize(6);
 			for (int shipment_ind = 0; shipment_ind < order_vector[order_idx].shipments.size(); shipment_ind++)
 			{
 				for (int product_ind = 0; product_ind < order_vector[order_idx].shipments[shipment_ind].products.size(); product_ind++)
@@ -402,26 +396,30 @@ int main(int argc, char **argv)
 					{
 						for (int j = 0; j < image_vector[i].models.size(); j++)
 						{
-							if (image_vector[i].models[j].type == type)
+							if (image_vector[i].models[j].type == type && j >= last_bin_models[i])
 							{
 								ROS_INFO("Product %s found", std::to_string(product_ind + 1).c_str());
 								ROS_INFO("Product type %s", type.c_str());
 								ROS_INFO("Bin number %s", std::to_string(i + 1).c_str());
 								ROS_INFO("AGV number %s", order_vector[order_idx].shipments[shipment_ind].agv_id.c_str());
+								ROS_INFO("Shipment type %s", order_vector[order_idx].shipments[shipment_ind].shipment_type.c_str());
 								desired.push_back(image_vector[i].models[j]);
 								tray_poses.push_back(order_vector[order_idx].shipments[shipment_ind].products[product_ind].pose);
 								agv_ids.push_back(order_vector[order_idx].shipments[shipment_ind].agv_id);
 								bin_numbers.push_back(i + 1);
+								last_bin_models[i] = j + 1;
 								break;
 							}
 						}
 					}
 				}
+				shipment_types.push_back(order_vector[order_idx].shipments[shipment_ind].shipment_type);
 			}
 		}
 		int model_num = 0;
 		while (!order_fulfilled && desired.size() > 0)
 		{
+
 			ROS_INFO("Arm loop");
 
 			if (model_num < desired.size())
@@ -457,8 +455,6 @@ int main(int argc, char **argv)
 					correction = 0.2;
 				}
 				double lin_act = des_tf.position.y - offset;
-
-				// double lin_act = des.position.y - 0.3;
 				joint_trajectory = linear_act(lin_act);
 				joint_state_pub.publish(joint_trajectory);
 				loop_rate.sleep();
@@ -518,7 +514,7 @@ int main(int argc, char **argv)
 
 				// Picked up part, now put in agv
 				ROS_INFO("%s", agv_ids[model_num].c_str());
-				if (agv_ids[model_num].c_str() == "agv2")
+				if (strcmp(agv_ids[model_num].c_str(),"agv2") == 0)
 				{
 					ROS_INFO("Chose agv2");
 					ros::spinOnce();
@@ -583,7 +579,31 @@ int main(int argc, char **argv)
 			{
 				order_fulfilled = true;
 				order_idx += 1;
-				// Ship order
+				if(shipment_types.size() == 1)
+				{
+					ROS_INFO("Order 0");
+					agv1_srv.request.shipment_type = shipment_types[0];
+					agv1_resp = agv1_client.call(agv1_srv);
+					ros::Duration(15).sleep();
+				}
+				else
+				{
+					if (strcmp(agv_ids[0].c_str(),"agv2") == 0)
+					{
+						ROS_INFO("Order 1-2");
+						agv2_srv.request.shipment_type = shipment_types[0];
+						agv1_srv.request.shipment_type = shipment_types[1];
+					}
+					else
+					{
+						ROS_INFO("Order 1-1");
+						agv1_srv.request.shipment_type = shipment_types[0];
+						agv2_srv.request.shipment_type = shipment_types[1];
+					}
+					agv1_resp = agv1_client.call(agv1_srv);
+					agv2_resp = agv2_client.call(agv2_srv);
+					ros::Duration(15).sleep();
+				}
 			}
 			ros::spinOnce();
 		}
