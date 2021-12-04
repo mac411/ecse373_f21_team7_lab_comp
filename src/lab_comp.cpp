@@ -138,24 +138,23 @@ std::string pose2str(geometry_msgs::Pose pose)
 	return posestring;
 }
 
-void scoreCallback(const std_msgs::Float32::ConstPtr &latest_score)
-{
-	score = latest_score->data;
-}
+// void scoreCallback(const std_msgs::Float32::ConstPtr &latest_score)
+// {
+// 	score = latest_score->data;
+// }
 
-void agv1StateCallback(const std_msgs::String::ConstPtr &state)
-{
-	agv1_state = state->data;
-}
+// void agv1StateCallback(const std_msgs::String::ConstPtr &state)
+// {
+// 	agv1_state = state->data;
+// }
 
-void agv2StateCallback(const std_msgs::String::ConstPtr &state)
-{
-	agv2_state = state->data;
-}
+// void agv2StateCallback(const std_msgs::String::ConstPtr &state)
+// {
+// 	agv2_state = state->data;
+// }
 
 trajectory_msgs::JointTrajectory generate_traj(geometry_msgs::Pose desired_pose, double lin_act)
 {
-	// desired_pose should be desired[model_num].pose for a part
 	geometry_msgs::PoseStamped des_pose, goal_pose;
 	des_pose.pose = desired_pose;
 	tf2::doTransform(des_pose, goal_pose, tfStamped);
@@ -255,7 +254,6 @@ trajectory_msgs::JointTrajectory linear_act(double lin_act)
 	q_pose[3] = joint_states.position[4];
 	q_pose[4] = joint_states.position[5];
 	q_pose[5] = joint_states.position[6];
-	//q_pose[1] = angles::normalize_angle(q_pose[1]);
 
 	ur_kinematics::forward((double *)&q_pose, (double *)&T_pose);
 
@@ -324,6 +322,8 @@ int main(int argc, char **argv)
 
 	ros::init(argc, argv, "lab_comp");
 	ros::NodeHandle n;
+
+	// Initialize Subscribers, Publishers, and Service Clients
 	tf2_ros::TransformListener tfListener(tfBuffer);
 	ros::ServiceClient begin_client = n.serviceClient<std_srvs::Trigger>("ariac/start_competition");
 	ros::Subscriber order_subscriber = n.subscribe("ariac/orders", 1000, orderCallback);
@@ -348,6 +348,7 @@ int main(int argc, char **argv)
 	ros::Subscriber agv1_state_sub = n.subscribe("ariac/agv1",1,agv1StateCallback);
 	ros::Subscriber agv2_state_sub = n.subscribe("ariac/agv2",1,agv2StateCallback);
 
+	// Start competition
 	service_call_succeeded = begin_client.call(begin_comp);
 	if (!service_call_succeeded)
 	{
@@ -374,8 +375,9 @@ int main(int argc, char **argv)
 	int shipment2 = 0;
 	while (ros::ok())
 	{
-		ROS_INFO("Current score is %s", std::to_string(score).c_str());
+		// ROS_INFO("Current score is %s", std::to_string(score).c_str());
 		loop_rate.sleep();
+		// Process relevant info from any newly received orders
 		if (order_vector.size() > 0 && order_num < order_vector.size())
 		{
 			order_fulfilled = false;
@@ -398,11 +400,11 @@ int main(int argc, char **argv)
 						{
 							if (image_vector[i].models[j].type == type && j >= last_bin_models[i])
 							{
-								ROS_INFO("Product %s found", std::to_string(product_ind + 1).c_str());
-								ROS_INFO("Product type %s", type.c_str());
-								ROS_INFO("Bin number %s", std::to_string(i + 1).c_str());
-								ROS_INFO("AGV number %s", order_vector[order_idx].shipments[shipment_ind].agv_id.c_str());
-								ROS_INFO("Shipment type %s", order_vector[order_idx].shipments[shipment_ind].shipment_type.c_str());
+								ROS_INFO("Product #%s found", std::to_string(product_ind + 1).c_str());
+								ROS_INFO("Product type: %s", type.c_str());
+								ROS_INFO("Bin number: %s", std::to_string(i + 1).c_str());
+								ROS_INFO("AGV number: %s", order_vector[order_idx].shipments[shipment_ind].agv_id.c_str());
+								ROS_INFO("Shipment type: %s\n", order_vector[order_idx].shipments[shipment_ind].shipment_type.c_str());
 								desired.push_back(image_vector[i].models[j]);
 								tray_poses.push_back(order_vector[order_idx].shipments[shipment_ind].products[product_ind].pose);
 								agv_ids.push_back(order_vector[order_idx].shipments[shipment_ind].agv_id);
@@ -417,11 +419,10 @@ int main(int argc, char **argv)
 			}
 		}
 		int model_num = 0;
+		// Fulfill current order
 		while (!order_fulfilled && desired.size() > 0)
 		{
-
-			ROS_INFO("Arm loop");
-
+			// Check if any more products in order
 			if (model_num < desired.size())
 			{
 				if (model_num != 0)
@@ -429,13 +430,12 @@ int main(int argc, char **argv)
 					joint_states = prev_joint_state;
 				}
 				loop_rate.sleep();
+
 				std::string bin_frame = "logical_camera_bin" + std::to_string(bin_numbers[model_num]) + "_frame";
 				try
 				{
 					tfStamped = tfBuffer.lookupTransform("world", bin_frame,
 														 ros::Time(0.0), ros::Duration(1.0));
-					ROS_INFO("Transform   to   [%s]   from   [%s]", tfStamped.header.frame_id.c_str(),
-							 tfStamped.child_frame_id.c_str());
 				}
 				catch (tf2::TransformException &ex)
 				{
@@ -454,6 +454,7 @@ int main(int argc, char **argv)
 				{
 					correction = 0.2;
 				}
+				// Move to correct bin
 				double lin_act = des_tf.position.y - offset;
 				joint_trajectory = linear_act(lin_act);
 				joint_state_pub.publish(joint_trajectory);
@@ -464,14 +465,13 @@ int main(int argc, char **argv)
 				{
 					tfStamped = tfBuffer.lookupTransform("arm1_base_link", bin_frame,
 														 ros::Time(0.0), ros::Duration(1.0));
-					ROS_INFO("Transform   to   [%s]   from   [%s]", tfStamped.header.frame_id.c_str(),
-							 tfStamped.child_frame_id.c_str());
 				}
 				catch (tf2::TransformException &ex)
 				{
 					ROS_ERROR("%s", ex.what());
 				}
 
+				// Pick up part
 				des.position.x = des.position.x - 0.7;
 				des.position.y = des.position.y - offset + correction;
 				joint_trajectory = generate_traj(des, lin_act);
@@ -513,10 +513,9 @@ int main(int argc, char **argv)
 				loop_rate.sleep();
 
 				// Picked up part, now put in agv
-				ROS_INFO("%s", agv_ids[model_num].c_str());
 				if (strcmp(agv_ids[model_num].c_str(),"agv2") == 0)
 				{
-					ROS_INFO("Chose agv2");
+					ROS_INFO("Going to agv2");
 					ros::spinOnce();
 					prev_joint_state = joint_states;
 					des.position.y = -2.3;
@@ -528,8 +527,6 @@ int main(int argc, char **argv)
 					{
 						tfStamped = tfBuffer.lookupTransform("arm1_base_link", "kit_tray_2",
 															 ros::Time(0.0), ros::Duration(1.0));
-						ROS_INFO("Transform   to   [%s]   from   [%s]", tfStamped.header.frame_id.c_str(),
-								 tfStamped.child_frame_id.c_str());
 					}
 					catch (tf2::TransformException &ex)
 					{
@@ -543,7 +540,7 @@ int main(int argc, char **argv)
 				}
 				else
 				{
-					ROS_INFO("Chose agv1");
+					ROS_INFO("Going to agv1");
 					ros::spinOnce();
 					prev_joint_state = joint_states;
 					des.position.y = 2.3;
@@ -555,8 +552,6 @@ int main(int argc, char **argv)
 					{
 						tfStamped = tfBuffer.lookupTransform("arm1_base_link", "kit_tray_1",
 															 ros::Time(0.0), ros::Duration(1.0));
-						ROS_INFO("Transform   to   [%s]   from   [%s]", tfStamped.header.frame_id.c_str(),
-								 tfStamped.child_frame_id.c_str());
 					}
 					catch (tf2::TransformException &ex)
 					{
@@ -581,7 +576,6 @@ int main(int argc, char **argv)
 				order_idx += 1;
 				if(shipment_types.size() == 1)
 				{
-					ROS_INFO("Order 0");
 					agv1_srv.request.shipment_type = shipment_types[0];
 					agv1_resp = agv1_client.call(agv1_srv);
 					ros::Duration(15).sleep();
@@ -590,13 +584,11 @@ int main(int argc, char **argv)
 				{
 					if (strcmp(agv_ids[0].c_str(),"agv2") == 0)
 					{
-						ROS_INFO("Order 1-2");
 						agv2_srv.request.shipment_type = shipment_types[0];
 						agv1_srv.request.shipment_type = shipment_types[1];
 					}
 					else
 					{
-						ROS_INFO("Order 1-1");
 						agv1_srv.request.shipment_type = shipment_types[0];
 						agv2_srv.request.shipment_type = shipment_types[1];
 					}
