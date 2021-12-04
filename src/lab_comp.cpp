@@ -34,6 +34,8 @@ osrf_gear::StorageUnit location;
 std::vector<osrf_gear::LogicalCameraImage> image_vector(10);
 sensor_msgs::JointState joint_states;
 std::vector<osrf_gear::Model> desired;
+std::vector<geometry_msgs::Pose> tray_poses;
+std::vector<std::__cxx11::string> agv_ids;
 trajectory_msgs::JointTrajectory joint_trajectory;
 osrf_gear::VacuumGripperControl gripper_control;
 osrf_gear::VacuumGripperState gripper_state;
@@ -345,21 +347,21 @@ int main(int argc, char **argv)
 			ROS_INFO("The object is of type: %s", material_location.request.material_type.c_str());
 			ROS_INFO("The storage unit containing this object is: %s", material_location.response.storage_units.front().unit_id.c_str());
 
-			try
-			{
-				tfStamped = tfBuffer.lookupTransform("arm1_base_link", "logical_camera_bin4_frame",
-													 ros::Time(0.0), ros::Duration(1.0));
-				ROS_INFO("Transform   to   [%s]   from   [%s]", tfStamped.header.frame_id.c_str(),
-						  tfStamped.child_frame_id.c_str());
-			}
-			catch (tf2::TransformException &ex)
-			{
-				ROS_ERROR("%s", ex.what());
-			}
+			// try
+			// {
+			// 	tfStamped = tfBuffer.lookupTransform("arm1_base_link", "logical_camera_bin4_frame",
+			// 										 ros::Time(0.0), ros::Duration(1.0));
+			// 	ROS_INFO("Transform   to   [%s]   from   [%s]", tfStamped.header.frame_id.c_str(),
+			// 			  tfStamped.child_frame_id.c_str());
+			// }
+			// catch (tf2::TransformException &ex)
+			// {
+			// 	ROS_ERROR("%s", ex.what());
+			// }
 
 			order_num += 1;
-			order_vector.clear();
 			std::string product_type = material_location.request.material_type;
+			int tray_pose_idx = 0;
 			for (int i = 0; i < 6; i++)
 			{
 				for (int j = 0; j < image_vector[i].models.size(); j++)
@@ -367,15 +369,14 @@ int main(int argc, char **argv)
 					if (image_vector[i].models[j].type == product_type)
 					{
 						desired.push_back(image_vector[i].models[j]);
+						tray_poses.push_back(order_vector.front().shipments.front().products[tray_pose_idx].pose);
+						agv_ids.push_back(order_vector.front().shipments.front().agv_id);
 						ROS_INFO("Product type: %s, Bin: %s, Pose: %s", product_type.c_str(), std::to_string(i + 1).c_str(), pose2str(image_vector[i].models[j].pose).c_str());
+						tray_pose_idx = tray_pose_idx + 1;
 					}
 				}
 			}
-		}
-
-		while (!order_fulfilled)
-		{
-			order_fulfilled = true;
+			order_vector.clear();
 		}
 
 		if (model_num < desired.size())
@@ -428,10 +429,6 @@ int main(int argc, char **argv)
 			joint_state_pub.publish(joint_trajectory);
 			loop_rate.sleep();
 
-			gripper_control.request.enable = 0;
-			gripper_client.call(gripper_control);
-			loop_rate.sleep();
-
 			des.position.y = des.position.y - 0.3;
 			joint_trajectory = generate_traj(des,lin_act);
 			joint_state_pub.publish(joint_trajectory);
@@ -442,86 +439,31 @@ int main(int argc, char **argv)
 			joint_state_pub.publish(joint_trajectory);
 			loop_rate.sleep();
 
+			des.position.y = -2;
+			joint_trajectory = linear_act(des.position.y);
+			joint_state_pub.publish(joint_trajectory);
+			loop_rate.sleep();
+			try
+			{
+				tfStamped = tfBuffer.lookupTransform("arm1_base_link", "logical_camera_agv2_frame",
+													 ros::Time(0.0), ros::Duration(1.0));
+				ROS_INFO("Transform   to   [%s]   from   [%s]", tfStamped.header.frame_id.c_str(),
+						  tfStamped.child_frame_id.c_str());
+			}
+			catch (tf2::TransformException &ex)
+			{
+				ROS_ERROR("%s", ex.what());
+			}
+			joint_trajectory = generate_traj(tray_poses[model_num],-2.3);
+			joint_state_pub.publish(joint_trajectory);
+			loop_rate.sleep();
+
+			gripper_control.request.enable = 0;
+			gripper_client.call(gripper_control);
+			loop_rate.sleep();
+
 			model_num++;
 		}
 		ros::spinOnce();
 	}
 	return 0;
-
-	// geometry_msgs::PoseStamped   part_pose,   goal_pose;
-	// part_pose.pose = desired[model_num].pose;
-	// tf2::doTransform(part_pose,   goal_pose,   tfStamped);
-	// q_pose[0] = joint_states.position[1]
-	// q_pose[1] = joint_states.position[2];
-	// q_pose[2] = joint_states.position[3];
-	// q_pose[3] = joint_states.position[4];
-	// q_pose[4] = joint_states.position[5];
-	// q_pose[5] = joint_states.position[6];
-
-	// ur_kinematics::forward((double *)&q_pose, (double *)&T_pose);
-
-	// T_des[0][3] = goal_pose.pose.position.x;
-	// T_des[1][3] = goal_pose.pose.position.y;
-	// T_des[2][3] = goal_pose.pose.position.z + 0.1;
-	// T_des[3][3] = 1.0;
-
-	// T_des[0][0] = 0.0; T_des[0][1] = -1.0; T_des[0][2] = 0.0;
-	// T_des[1][0] = 0.0; T_des[1][1] = 0.0; T_des[1][2] = 1.0;
-	// T_des[2][0] = -1.0; T_des[2][1] = 0.0; T_des[2][2] = 0.0;
-	// T_des[3][0] = 0.0; T_des[3][1] = 0.0; T_des[3][2] = 0.0;
-
-	// int num_sols = ur_kinematics::inverse((double *)&T_des, (double *)&q_des);
-
-	// joint_trajectory.header.seq = count++;
-	// joint_trajectory.header.stamp = ros::Time::now();
-	// joint_trajectory.header.frame_id = "/world";
-
-	// joint_trajectory.joint_names.clear();
-	// joint_trajectory.joint_names.push_back("linear_arm_actuator_joint");
-	// joint_trajectory.joint_names.push_back("shoulder_pan_joint");
-	// joint_trajectory.joint_names.push_back("shoulder_lift_joint");
-	// joint_trajectory.joint_names.push_back("elbow_joint");
-	// joint_trajectory.joint_names.push_back("wrist_1_joint");
-	// joint_trajectory.joint_names.push_back("wrist_2_joint");
-	// joint_trajectory.joint_names.push_back("wrist_3_joint");
-
-	// joint_trajectory.points.resize(2);
-	// joint_trajectory.points[0].positions.resize(joint_trajectory.joint_names.size());
-	// for (int indy = 0; indy < joint_trajectory.joint_names.size(); indy++)
-	// {
-	// 	for (int indz = 0; indz < joint_states.name.size(); indz++)
-	// 	{
-	// 		if (joint_trajectory.joint_names[indy] == joint_states.name[indz])
-	// 		{
-	// 			joint_trajectory.points[0].positions[indy] = joint_states.position[indz];
-	// 			break;
-	// 		}
-	// 	}
-	// }
-
-	// joint_trajectory.points[0].time_from_start = ros::Duration(0.0);
-
-	// int q_des_indx = 0;
-	// for (int i = 0; i < num_sols; i++)
-	// {
-	// 	q_des_indx = i;
-	// 	if (q_des[q_des_indx][2] >= 3*1.5707 && q_des[q_des_indx][2] <= 4*1.5707)
-	// 	{
-	// 		if (abs(q_des[q_des_indx][5] - (3*1.5707)) < 0.5)
-	// 		{
-	// 			break;
-	// 		}
-	// 	}
-	// }
-	// ROS_INFO("%f",q_des_indx);
-
-	// q_des[q_des_indx][2] = angles::normalize_angle(q_des[q_des_indx][2]);
-
-	// joint_trajectory.points[1].positions.resize(joint_trajectory.joint_names.size());
-	// joint_trajectory.points[1].positions[0] = joint_states.position[1];
-	// for (int indy = 0; indy < 6; indy++)
-	// {
-	// 	joint_trajectory.points[1].positions[indy + 1] = q_des[q_des_indx][indy];
-	// }
-	// joint_trajectory.points[1].time_from_start = ros::Duration(1.0);
-}
