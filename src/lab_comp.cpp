@@ -40,6 +40,8 @@ trajectory_msgs::JointTrajectory joint_trajectory;
 osrf_gear::VacuumGripperControl gripper_control;
 osrf_gear::VacuumGripperState gripper_state;
 sensor_msgs::JointState prev_joint_state;
+std::vector<osrf_gear::Shipment> shipment_vec;
+std::vector<int> bin_numbers;
 double T_pose[4][4], T_des[4][4];
 double q_pose[6], q_des[8][6];
 int count = 0;
@@ -220,7 +222,7 @@ trajectory_msgs::JointTrajectory generate_traj(geometry_msgs::Pose desired_pose,
 	return joint_trajectory;
 }
 
-trajectory_msgs::JointTrajectory linear_act(double offset)
+trajectory_msgs::JointTrajectory linear_act(double lin_act)
 {
 	q_pose[0] = joint_states.position[1];
 	q_pose[1] = joint_states.position[2];
@@ -285,7 +287,7 @@ trajectory_msgs::JointTrajectory linear_act(double offset)
 
 	joint_trajectory.points[1].time_from_start = ros::Duration(1.0);
 
-	joint_trajectory.points[1].positions[0] = offset - 0.3;
+	joint_trajectory.points[1].positions[0] = lin_act;
 
 	return joint_trajectory;
 }
@@ -335,129 +337,104 @@ int main(int argc, char **argv)
 
 	ros::Rate loop_rate(0.5);
 
-	int model_num = 0;
+	int order_idx = 0;
 	int order_num = 0;
 	bool order_fulfilled = false;
 	while (ros::ok())
 	{
 		loop_rate.sleep();
+		// if (order_vector.size() > 0 && order_num < order_vector.size())
+		// {
+		// 	material_location.request.material_type = order_vector.front().shipments.front().products.front().type;
+		// 	location_call_succeeded = material_client.call(material_location);
+		// 	ROS_INFO("The object is of type: %s", material_location.request.material_type.c_str());
+		// 	ROS_INFO("The storage unit containing this object is: %s", material_location.response.storage_units.front().unit_id.c_str());
+
+		// 	// try
+		// 	// {
+		// 	// 	tfStamped = tfBuffer.lookupTransform("arm1_base_link", "logical_camera_bin4_frame",
+		// 	// 										 ros::Time(0.0), ros::Duration(1.0));
+		// 	// 	ROS_INFO("Transform   to   [%s]   from   [%s]", tfStamped.header.frame_id.c_str(),
+		// 	// 			  tfStamped.child_frame_id.c_str());
+		// 	// }
+		// 	// catch (tf2::TransformException &ex)
+		// 	// {
+		// 	// 	ROS_ERROR("%s", ex.what());
+		// 	// }
+
+		// 	//order_num += 1;
+		// 	// for(int i = 0; i < order_vector.back().shipments.size(); i++)
+		// 	// {
+		// 	// 	shipment_vec.push_back(order_vector[order_num].shipments[i]);
+		// 	// }
+		// 	// std::string product_type = material_location.request.material_type;
+		// 	// int tray_pose_idx = 0;
+		// 	// for (int i = 0; i < 6; i++)
+		// 	// {
+		// 	// 	for (int j = 0; j < image_vector[i].models.size(); j++)
+		// 	// 	{
+		// 	// 		if (image_vector[i].models[j].type == product_type)
+		// 	// 		{
+		// 	// 			desired.push_back(image_vector[i].models[j]);
+		// 	// 			tray_poses.push_back(order_vector.front().shipments.front().products[tray_pose_idx].pose);
+		// 	// 			agv_ids.push_back(order_vector.front().shipments.front().agv_id);
+		// 	// 			ROS_INFO("Product type: %s, Bin: %s, Pose: %s", product_type.c_str(), std::to_string(i + 1).c_str(), pose2str(image_vector[i].models[j].pose).c_str());
+		// 	// 			tray_pose_idx = tray_pose_idx + 1;
+		// 	// 		}
+		// 	// 	}
+		// 	// }
+		// 	// order_vector.clear();
+		// }
 		if (order_vector.size() > 0 && order_num < order_vector.size())
 		{
-			material_location.request.material_type = order_vector.front().shipments.front().products.front().type;
-			location_call_succeeded = material_client.call(material_location);
-			ROS_INFO("The object is of type: %s", material_location.request.material_type.c_str());
-			ROS_INFO("The storage unit containing this object is: %s", material_location.response.storage_units.front().unit_id.c_str());
-
-			// try
-			// {
-			// 	tfStamped = tfBuffer.lookupTransform("arm1_base_link", "logical_camera_bin4_frame",
-			// 										 ros::Time(0.0), ros::Duration(1.0));
-			// 	ROS_INFO("Transform   to   [%s]   from   [%s]", tfStamped.header.frame_id.c_str(),
-			// 			  tfStamped.child_frame_id.c_str());
-			// }
-			// catch (tf2::TransformException &ex)
-			// {
-			// 	ROS_ERROR("%s", ex.what());
-			// }
-
+			order_fulfilled = false;
+			desired.clear();
+			tray_poses.clear();
+			agv_ids.clear();
+			bin_numbers.clear();
 			order_num += 1;
-			std::string product_type = material_location.request.material_type;
-			int tray_pose_idx = 0;
-			for (int i = 0; i < 6; i++)
+			for (int shipment_ind = 0; shipment_ind < order_vector[order_idx].shipments.size(); shipment_ind++)
 			{
-				for (int j = 0; j < image_vector[i].models.size(); j++)
+				for (int product_ind = 0; product_ind < order_vector[order_idx].shipments[shipment_ind].products.size(); product_ind++)
 				{
-					if (image_vector[i].models[j].type == product_type)
+					std::string type = order_vector[order_idx].shipments[shipment_ind].products[product_ind].type;
+					for (int i = 0; i < 6; i++)
 					{
-						desired.push_back(image_vector[i].models[j]);
-						tray_poses.push_back(order_vector.front().shipments.front().products[tray_pose_idx].pose);
-						agv_ids.push_back(order_vector.front().shipments.front().agv_id);
-						ROS_INFO("Product type: %s, Bin: %s, Pose: %s", product_type.c_str(), std::to_string(i + 1).c_str(), pose2str(image_vector[i].models[j].pose).c_str());
-						tray_pose_idx = tray_pose_idx + 1;
+						for (int j = 0; j < image_vector[i].models.size(); j++)
+						{
+							if (image_vector[i].models[j].type == type)
+							{
+								ROS_INFO("Product %s found", std::to_string(product_ind + 1).c_str());
+								ROS_INFO("Product type %s", type.c_str());
+								ROS_INFO("Bin number %s", std::to_string(i + 1).c_str());
+								ROS_INFO("AGV number %s", order_vector[order_idx].shipments[shipment_ind].agv_id.c_str());
+								desired.push_back(image_vector[i].models[j]);
+								tray_poses.push_back(order_vector[order_idx].shipments[shipment_ind].products[product_ind].pose);
+								agv_ids.push_back(order_vector[order_idx].shipments[shipment_ind].agv_id);
+								bin_numbers.push_back(i + 1);
+								break;
+							}
+						}
 					}
 				}
 			}
-			order_vector.clear();
 		}
-
-		if (model_num < desired.size())
+		int model_num = 0;
+		while (!order_fulfilled && desired.size() > 0)
 		{
-			if(model_num != 0)
+			ROS_INFO("Arm loop");
+
+			if (model_num < desired.size())
 			{
-				joint_states = prev_joint_state;
-			}
-			loop_rate.sleep();
-			geometry_msgs::Pose des = desired[model_num].pose;
-			double lin_act = des.position.y - 0.3;
-			joint_trajectory = linear_act(des.position.y);
-			joint_state_pub.publish(joint_trajectory);
-			loop_rate.sleep();
-			loop_rate.sleep();
-			try
-			{
-				tfStamped = tfBuffer.lookupTransform("arm1_base_link", "logical_camera_bin4_frame",
-													 ros::Time(0.0), ros::Duration(1.0));
-				ROS_INFO("Transform   to   [%s]   from   [%s]", tfStamped.header.frame_id.c_str(),
-						 tfStamped.child_frame_id.c_str());
-			}
-			catch (tf2::TransformException &ex)
-			{
-				ROS_ERROR("%s", ex.what());
-			}
-
-			des.position.x = des.position.x - 0.7;
-			des.position.y = des.position.y - 0.3;
-			joint_trajectory = generate_traj(des, lin_act);
-			joint_state_pub.publish(joint_trajectory);
-			loop_rate.sleep();
-
-			des.position.x = des.position.x + 0.6;
-			joint_trajectory = generate_traj(des, lin_act);
-			joint_state_pub.publish(joint_trajectory);
-			loop_rate.sleep();
-
-			des.position.y = des.position.y + 0.3;
-			joint_trajectory = generate_traj(des, lin_act);
-			joint_state_pub.publish(joint_trajectory);
-			loop_rate.sleep();
-
-			des.position.x = des.position.x + 0.08;
-			joint_trajectory = generate_traj(des, lin_act);
-			joint_state_pub.publish(joint_trajectory);
-			loop_rate.sleep();
-
-			gripper_control.request.enable = 1;
-			gripper_client.call(gripper_control);
-			loop_rate.sleep();
-
-			des.position.x = des.position.x - 0.18;
-			joint_trajectory = generate_traj(des, lin_act);
-			joint_state_pub.publish(joint_trajectory);
-			loop_rate.sleep();
-
-			des.position.y = des.position.y - 0.3;
-			joint_trajectory = generate_traj(des, lin_act);
-			joint_state_pub.publish(joint_trajectory);
-			loop_rate.sleep();
-
-			des.position.x = des.position.x - 0.6;
-			joint_trajectory = generate_traj(des, lin_act);
-			joint_state_pub.publish(joint_trajectory);
-			loop_rate.sleep();
-
-			// Picked up part, now put in agv
-			ROS_INFO("%s",agv_ids[model_num].c_str());
-			if (agv_ids[model_num].c_str() == "agv2")
-			{
-				ros::spinOnce();
-				des.position.y = -2;
-				joint_trajectory = linear_act(des.position.y);
-				joint_state_pub.publish(joint_trajectory);
+				if (model_num != 0)
+				{
+					joint_states = prev_joint_state;
+				}
 				loop_rate.sleep();
-				loop_rate.sleep();
+				std::string bin_frame = "logical_camera_bin" + std::to_string(bin_numbers[model_num]) + "_frame";
 				try
 				{
-					tfStamped = tfBuffer.lookupTransform("arm1_base_link", "kit_tray_2",
+					tfStamped = tfBuffer.lookupTransform("world", bin_frame,
 														 ros::Time(0.0), ros::Duration(1.0));
 					ROS_INFO("Transform   to   [%s]   from   [%s]", tfStamped.header.frame_id.c_str(),
 							 tfStamped.child_frame_id.c_str());
@@ -466,44 +443,149 @@ int main(int argc, char **argv)
 				{
 					ROS_ERROR("%s", ex.what());
 				}
-				des = tray_poses[model_num];
-				des.position.z = des.position.z + 0.1;
-				joint_trajectory = generate_traj(des, -2.3);
+				geometry_msgs::Pose des = desired[model_num].pose;
+				geometry_msgs::Pose des_tf;
+				tf2::doTransform(des, des_tf, tfStamped);
+				double offset = 0.8;
+				double correction = 0.0;
+				if(des.position.y <= 0.05)
+				{
+					correction = 0.45;
+				}
+				else
+				{
+					correction = 0.2;
+				}
+				double lin_act = des_tf.position.y - offset;
+
+				// double lin_act = des.position.y - 0.3;
+				joint_trajectory = linear_act(lin_act);
 				joint_state_pub.publish(joint_trajectory);
 				loop_rate.sleep();
+				loop_rate.sleep();
+
+				try
+				{
+					tfStamped = tfBuffer.lookupTransform("arm1_base_link", bin_frame,
+														 ros::Time(0.0), ros::Duration(1.0));
+					ROS_INFO("Transform   to   [%s]   from   [%s]", tfStamped.header.frame_id.c_str(),
+							 tfStamped.child_frame_id.c_str());
+				}
+				catch (tf2::TransformException &ex)
+				{
+					ROS_ERROR("%s", ex.what());
+				}
+
+				des.position.x = des.position.x - 0.7;
+				des.position.y = des.position.y - offset + correction;
+				joint_trajectory = generate_traj(des, lin_act);
+				joint_state_pub.publish(joint_trajectory);
+				loop_rate.sleep();
+
+				des.position.x = des.position.x + 0.6;
+				joint_trajectory = generate_traj(des, lin_act);
+				joint_state_pub.publish(joint_trajectory);
+				loop_rate.sleep();
+
+				des.position.y = des.position.y + offset - correction;
+				joint_trajectory = generate_traj(des, lin_act);
+				joint_state_pub.publish(joint_trajectory);
+				loop_rate.sleep();
+
+				des.position.x = des.position.x + 0.08;
+				joint_trajectory = generate_traj(des, lin_act);
+				joint_state_pub.publish(joint_trajectory);
+				loop_rate.sleep();
+
+				gripper_control.request.enable = 1;
+				gripper_client.call(gripper_control);
+				loop_rate.sleep();
+
+				des.position.x = des.position.x - 0.18;
+				joint_trajectory = generate_traj(des, lin_act);
+				joint_state_pub.publish(joint_trajectory);
+				loop_rate.sleep();
+
+				des.position.y = des.position.y - offset + correction;
+				joint_trajectory = generate_traj(des, lin_act);
+				joint_state_pub.publish(joint_trajectory);
+				loop_rate.sleep();
+
+				des.position.x = des.position.x - 0.5;
+				joint_trajectory = generate_traj(des, lin_act);
+				joint_state_pub.publish(joint_trajectory);
+				loop_rate.sleep();
+
+				// Picked up part, now put in agv
+				ROS_INFO("%s", agv_ids[model_num].c_str());
+				if (agv_ids[model_num].c_str() == "agv2")
+				{
+					ROS_INFO("Chose agv2");
+					ros::spinOnce();
+					prev_joint_state = joint_states;
+					des.position.y = -2.3;
+					joint_trajectory = linear_act(des.position.y);
+					joint_state_pub.publish(joint_trajectory);
+					loop_rate.sleep();
+					loop_rate.sleep();
+					try
+					{
+						tfStamped = tfBuffer.lookupTransform("arm1_base_link", "kit_tray_2",
+															 ros::Time(0.0), ros::Duration(1.0));
+						ROS_INFO("Transform   to   [%s]   from   [%s]", tfStamped.header.frame_id.c_str(),
+								 tfStamped.child_frame_id.c_str());
+					}
+					catch (tf2::TransformException &ex)
+					{
+						ROS_ERROR("%s", ex.what());
+					}
+					des = tray_poses[model_num];
+					des.position.z = des.position.z + 0.1;
+					joint_trajectory = generate_traj(des, -2.3);
+					joint_state_pub.publish(joint_trajectory);
+					loop_rate.sleep();
+				}
+				else
+				{
+					ROS_INFO("Chose agv1");
+					ros::spinOnce();
+					prev_joint_state = joint_states;
+					des.position.y = 2.3;
+					joint_trajectory = linear_act(des.position.y);
+					joint_state_pub.publish(joint_trajectory);
+					loop_rate.sleep();
+					loop_rate.sleep();
+					try
+					{
+						tfStamped = tfBuffer.lookupTransform("arm1_base_link", "kit_tray_1",
+															 ros::Time(0.0), ros::Duration(1.0));
+						ROS_INFO("Transform   to   [%s]   from   [%s]", tfStamped.header.frame_id.c_str(),
+								 tfStamped.child_frame_id.c_str());
+					}
+					catch (tf2::TransformException &ex)
+					{
+						ROS_ERROR("%s", ex.what());
+					}
+					des = tray_poses[model_num];
+					des.position.z = des.position.z + 0.1;
+					joint_trajectory = generate_traj(des, 2.3);
+					joint_state_pub.publish(joint_trajectory);
+					loop_rate.sleep();
+				}
+
+				gripper_control.request.enable = 0;
+				gripper_client.call(gripper_control);
+				loop_rate.sleep();
+
+				model_num++;
 			}
 			else
 			{
-				ros::spinOnce();
-				prev_joint_state = joint_states;
-				des.position.y = 2.6;
-				joint_trajectory = linear_act(des.position.y);
-				joint_state_pub.publish(joint_trajectory);
-				loop_rate.sleep();
-				loop_rate.sleep();
-				try
-				{
-					tfStamped = tfBuffer.lookupTransform("arm1_base_link", "kit_tray_1",
-														 ros::Time(0.0), ros::Duration(1.0));
-					ROS_INFO("Transform   to   [%s]   from   [%s]", tfStamped.header.frame_id.c_str(),
-							 tfStamped.child_frame_id.c_str());
-				}
-				catch (tf2::TransformException &ex)
-				{
-					ROS_ERROR("%s", ex.what());
-				}
-				des = tray_poses[model_num];
-				des.position.z = des.position.z + 0.1;
-				joint_trajectory = generate_traj(des, 2.3);
-				joint_state_pub.publish(joint_trajectory);
-				loop_rate.sleep();
+				order_fulfilled = true;
+				order_idx += 1;
+				// Ship order
 			}
-
-			gripper_control.request.enable = 0;
-			gripper_client.call(gripper_control);
-			loop_rate.sleep();
-
-			model_num++;
+			ros::spinOnce();
 		}
 		ros::spinOnce();
 	}
