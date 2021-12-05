@@ -71,7 +71,9 @@ Finally, Phase 4 combines all of the previous phases into one that is capable of
 
 ## Theory of Operation
 
-This section mostly applies to Phase 4. Below is a block diagram depicting the manner in which our node completes the orders.
+This section mostly applies to Phase 4. Below is a block diagram depicting the manner in which our node completes the orders:  
+
+<img width="883" alt="Screen Shot 2021-12-04 at 9 02 07 PM" src="https://user-images.githubusercontent.com/68517385/144730635-80835dcd-c02c-4f4d-b0cc-da6d37a09ea5.png">
 
 ## Important Note
 The simulation environment process must be killed and restarted manually in order start the competition over again. The node will warn you if it has not executed properly. To kill all the processes, use `^C` to kill our node, followed by the `fg` command to bring the competition environment to the foreground, and then `^C` one more time.
